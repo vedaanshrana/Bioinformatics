@@ -10,3 +10,4 @@ SmaI_site, SmaI
 AmpR_gene, Ampicillin
 lacZ_alpha, Blue_White_Selection
 ori_pMB1, High_Copy_Replication
+
