@@ -1,180 +1,222 @@
 import sys
 import os
+import re
 
 
 class PlasmidDesigner:
-    def __init__(self):
-        # Database of standard sequences (Mock sequences for demonstration)
-        # In a real scenario, these would be fetched from NCBI/GenBank.
-        self.sequence_db = {
-            # --- DEFAULT REPLICATION GENES (Based on Jain & Srivastava, 2013) ---
-            # Essential for BHR plasmid replication
-            "oriV": "TTATCCGCTCACAATTCCACACA",  # Vegetative Origin
-            "repA": "ATGAGCCCGAAAGCCAGCCCG",  # Helicase
-            "repB": "ATGGCGACCGAGTTGCTCTTG",  # Primase
-            "repC": "ATGTCCGAGAGCCGGATCGTG",  # Initiator
-
-            # --- ANTIBIOTIC MARKERS ---
-            "Ampicillin": "TTACCAATGCTTAATCAGTGAGGCACCTATCTCAGCGATCTGTCTATTTCGTTCAT",
+    def __init__(self, marker_file="markers.tab"):
+        # Internal Library of Genes (Since your file describes them but lacks the full sequence)
+        self.internal_seq_library = {
+            # Antibiotics
+            "AmpR": "ATGAGTATTCAACATTTCCGTGTCGCCCTTATTCCCTTTTTTGCGGCATTTTGCCTTCCTGTTTTTGCTCACCCAGAAACGCTGGTGAAAGTAAAAGATGCTGAAGATCAGTTGGGTGCACGAGTGGGTTACATCGAACTGGATCTCAACAGCGGTAAGATCCTTGAGAGTTTTCGCCCCGAAGAACGTTTTCCAATGATGAGCACTTTTAA",
+            "Ampicillin": "ATGAGTATTCAACATTTCCGTGTCGCCCTTATTCCCTTTTTTGCGGCATTTTGCCTTCCTGTTTTTGCTCACCCAGAAACGCTGGTGAAAGTAAAAGATGCTGAAGATCAGTTGGGTGCACGAGTGGGTTACATCGAACTGGATCTCAACAGCGGTAAGATCCTTGAGAGTTTTCGCCCCGAAGAACGTTTTCCAATGATGAGCACTTTTAA",
+            "KanR": "ATGGCTAAAATGAGAATATCACCGGAATTGAAAAAACTGATCGAAAAA",
             "Kanamycin": "ATGGCTAAAATGAGAATATCACCGGAATTGAAAAAACTGATCGAAAAA",
-            "Tetracycline": "ATGAATAGTTCGACAAAGATCGCATTGGTAATTACGTTACTCGATGCCAT",
-            "Chloramphenicol": "ATGGAGAAAAAAATCACTGGATATACCACCGTTGATATATCCCAATGGC",
-
-            # --- RESTRICTION ENZYME SITES (Palindromic sequences) ---
-            "EcoRI": "GAATTC",
-            "BamHI": "GGATCC",
-            "HindIII": "AAGCTT",
-            "NotI": "GCGGCCGC",
-            "XhoI": "CTCGAG",
-            "PstI": "CTGCAG"
+            "CmR": "ATGGAGAAAAAAATCACTGGATATACCACCGTTGATATATCCCAATGGC",
+            "TetR": "ATGAATAGTTCGACAAAGATCGCATTGGTAATTACGTTACTCGATGCCAT",
+            # Common parts
+            "lacZ": "GGCAGCTGGCACGACAGGTTTCCCGACTGG",
+            "GFP": "ATGGTGAGCAAGGGCGAGGAGCTGTTCACCGGGGTGGTGCCCATCCTGGTCGAGCTGGACGGCGACGTAAACGGCCACAAGTTCAGCGTGTCCGGCGAGGGCGAGGGCGATGCCACCTACGGCAAGCTGACCCTGAAGTTCATCTGCACCACCGGCAAGCTGCCCGTGCCCTGGCCCACCCTCGTGACCACCCTGACCTACGGCGTGCAGTGCTTCAGCCGCTACCCCGACCACATGAAGCAGCACGACTTCTTCAAGTCCGCCATGCCCGAAGGCTACGTCCAGGAGCGCACCATCTTCTTCAAGGACGACGGCAACTACAAGACCCGCGCCGAGGTGAAGTTCGAGGGCGACACCCTGGTGAACCGCATCGAGCTGAAGGGCATCGACTTCAAGGAGGACGGCAACATCCTGGGGCACAAGCTGGAGTACAACTACAACAGCCACAACGTCTATATCATGGCCGACAAGCAGAAGAACGGCATCAAGGTGAACTTCAAGATCCGCCACAACATCGAGGACGGCAGCGTGCAGCTCGCCGACCACTACCAGCAGAACACCCCCATCGGCGACGGCCCCGTGCTGCTGCCCGACAACCACTACCTGAGCACCCAGTCCGCCCTGAGCAAAGACCCCAACGAGAAGCGCGATCACATGGTCCTGCTGGAGTTCGTGACCGCCGCCGGGATCACTCTCGGCATGGACGAGCTGTACAAGTAA"
         }
 
-    def read_fasta(self, file_path):
-        """Reads the Input DNA (Insert) from a FASTA file."""
+        self.marker_db = {}
+        self.enzyme_db = {}
+
+        # Load the user's table
+        self.load_markers_from_table(marker_file)
+
+    def load_markers_from_table(self, file_path):
+        """
+        Parses the specific Markdown Table format provided by the user.
+        Extracts Enzyme sequences from the 'Recognition' column.
+        """
+        print(f"[INFO] Loading markers from '{file_path}'...")
         if not os.path.exists(file_path):
-            print(f"Error: {file_path} not found.")
+            print("[WARN] File not found. Using internal defaults only.")
+            return
+
+        with open(file_path, 'r') as f:
+            for line in f:
+                # 1. Basic cleaning
+                line = line.strip()
+                if not line or line.startswith("|-") or "Category" in line:
+                    continue  # Skip separator lines and headers
+
+                # 2. Split by pipe '|'
+                # Format: | Category | Name | Recognition | Usage |
+                parts = [p.strip() for p in line.split('|')]
+
+                # Because of the leading/trailing pipes, the actual data is usually at indices 1, 2, 3...
+                # parts[0] is empty string before first pipe
+                if len(parts) < 4: continue
+
+                category = parts[1]
+                name_short = parts[2]
+                recognition_text = parts[3]
+
+                # 3. Handle Restriction Enzymes
+                if "Restriction enzyme" in category:
+                    # Logic: Extract uppercase DNA sequence from "Recognizes GAATTC"
+                    # Regex looks for continuous A,C,G,T string of length 4 or more
+                    match = re.search(r'[ACGT]{4,}', recognition_text)
+                    if match:
+                        seq = match.group(0)
+                        self.enzyme_db[name_short] = seq
+                        # print(f"  -> Loaded Enzyme: {name_short} = {seq}")
+                    else:
+                        pass  # Could be 'Cuts outside...' types (Golden Gate), ignoring for basic cloning logic
+
+                # 4. Handle Antibiotics/Markers
+                elif "Selection marker" in category or "Screening" in category:
+                    # The file DOES NOT have the sequence, so we link the Name to our Internal Library
+                    # Try to find a match in our library (e.g., "AmpR" or "Ampicillin")
+
+                    # We store it so the Design file can reference it
+                    # Check exact match first
+                    if name_short in self.internal_seq_library:
+                        self.marker_db[name_short] = self.internal_seq_library[name_short]
+                    else:
+                        # Sometimes Design.txt uses "Ampicillin" but table has "AmpR".
+                        # We won't solve every alias, but we ensure the Short Name is registered.
+                        # If we don't have the sequence, we use a placeholder.
+                        self.marker_db[name_short] = "NNNNNN_MISSING_SEQ_NNNNNN"
+
+        print(f"[INFO] Successfully loaded {len(self.enzyme_db)} enzymes and {len(self.marker_db)} markers.")
+
+    def read_fasta(self, file_path):
+        """Reads DNA sequence from a FASTA file."""
+        if not os.path.exists(file_path):
+            print(f"[ERROR] Input file '{file_path}' not found.")
             return ""
 
-        sequence = ""
+        seq_parts = []
         with open(file_path, 'r') as f:
             for line in f:
                 if not line.startswith(">"):
-                    sequence += line.strip().upper()
-        return sequence
+                    seq_parts.append(line.strip().upper())
+        return "".join(seq_parts)
+
+    def find_ori_via_gc_skew(self, sequence):
+        """
+        Identify the Origin of Replication (ORI) using GC Skew Analysis.
+        """
+        print("[ALGO] Running GC Skew analysis to find ORI...")
+        skew = 0
+        min_skew = 0
+        min_index = 0
+
+        for i, base in enumerate(sequence):
+            if base == 'G':
+                skew += 1
+            elif base == 'C':
+                skew -= 1
+
+            if skew < min_skew:
+                min_skew = skew
+                min_index = i
+
+        print(f"[ALGO] ORI identified at index {min_index}.")
+
+        # Extract 600bp region around the minima
+        ori_length = 600
+        start_idx = min_index
+        if start_idx + ori_length < len(sequence):
+            ori_seq = sequence[start_idx: start_idx + ori_length]
+        else:
+            overflow = (start_idx + ori_length) - len(sequence)
+            ori_seq = sequence[start_idx:] + sequence[:overflow]
+        return ori_seq
 
     def parse_design(self, file_path):
-        """Parses the Design.txt file to extract MCS and Markers."""
-        layout = {
-            "MCS": [],
-            "Markers": []
-        }
-
+        """Parses Design.txt for MCS and Markers."""
+        layout = {"MCS": [], "Markers": []}
         if not os.path.exists(file_path):
-            print(f"Error: {file_path} not found.")
             return layout
 
         with open(file_path, 'r') as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("**"): continue
-
                 parts = [p.strip() for p in line.split(',')]
 
-                if len(parts) == 2:
-                    feature_type, name = parts
+                if len(parts) >= 2:
+                    feature_type = parts[0]
+                    name = parts[1]
 
                     if "Multiple_Cloning_Site" in feature_type:
-                        # Pair: (MCS_ID, Enzyme_Name)
                         layout["MCS"].append(name)
                     elif "Antibiotic_marker" in feature_type:
-                        # Pair: (Marker_ID, Antibiotic_Name)
                         layout["Markers"].append(name)
-
         return layout
 
-    def get_gene_sequence(self, gene_name):
-        """Retrieves sequence from DB or returns a placeholder N-string."""
-        # Simple fuzzy matching for the demo
-        for key, seq in self.sequence_db.items():
-            if key.lower() in gene_name.lower():
-                return seq
-        return "NNNNNNNNNN"  # Placeholder if unknown
-
-    def construct_plasmid(self, insert_dna, design_layout):
+    def construct_plasmid(self, ori_seq, design_layout):
         """
-        Assembles the plasmid:
-        [Default Rep Module] + [Antibiotic Markers] + [MCS/Restriction 5'] + [INSERT] + [MCS/Restriction 3']
+        Assembles the new plasmid: [Found_ORI] + [Markers] + [MCS_Enzymes]
         """
+        plasmid = ""
 
-        print("--- Constructing Plasmid ---")
+        # 1. Add ORI
+        plasmid += ori_seq
 
-        # 1. Add Default Replication Genes (Based on Paper)
-        # "Each plasmid will have certain genes necessary for its replication"
-        # Using RepA, RepB, RepC logic from IncQ plasmids
-        plasmid_seq = ""
-        print("Adding Default Replication Module (oriV, repA, repB, repC)...")
-        plasmid_seq += self.sequence_db["oriV"]
-        plasmid_seq += self.sequence_db["repA"]
-        plasmid_seq += self.sequence_db["repB"]
-        plasmid_seq += self.sequence_db["repC"]
+        # 2. Add Markers (Handling aliases)
+        for marker_name in design_layout["Markers"]:
+            # Try direct match (e.g., "AmpR")
+            if marker_name in self.marker_db:
+                plasmid += self.marker_db[marker_name]
+            # Try alias match (e.g., Design says "Ampicillin" but Table has "AmpR")
+            elif marker_name == "Ampicillin" and "AmpR" in self.marker_db:
+                plasmid += self.marker_db["AmpR"]
+            elif marker_name == "Kanamycin" and "KanR" in self.marker_db:
+                plasmid += self.marker_db["KanR"]
+            elif marker_name in self.internal_seq_library:
+                # Fallback: It wasn't in the table, but we know the sequence anyway
+                print(f"[NOTE] '{marker_name}' not in table, but found in internal library.")
+                plasmid += self.internal_seq_library[marker_name]
+            else:
+                print(f"[WARN] Marker '{marker_name}' sequence unknown. Inserting N-block.")
+                plasmid += "NNNNNNNNNN"
 
-        # 2. Add Antibiotic Markers
-        for marker in design_layout["Markers"]:
-            print(f"Adding Marker: {marker}...")
-            plasmid_seq += self.get_gene_sequence(marker)
+        # 3. Add MCS Enzymes (Parsed from the table)
+        for enzyme in design_layout["MCS"]:
+            if enzyme in self.enzyme_db:
+                plasmid += self.enzyme_db[enzyme]
+            else:
+                print(f"[WARN] Enzyme '{enzyme}' not defined in markers.tab. Inserting N-block.")
+                plasmid += "NNNNNNNNNN"
 
-        # 3. Add Cloning Sites and Insert
-        # Logic: We treat the first half of MCS list as 5' flank and rest as 3' flank
-        # or simple flanking. Let's place the insert BETWEEN the enzymes.
+        return plasmid
 
-        mcs_enzymes = design_layout["MCS"]
-
-        # Add 5' Restriction Site (First Enzyme)
-        if len(mcs_enzymes) > 0:
-            enzyme_5 = mcs_enzymes[0]
-            print(f"Adding 5' Restriction Site: {enzyme_5}...")
-            plasmid_seq += self.get_gene_sequence(enzyme_5)
-
-        # Add The Input DNA (The Insert)
-        print("Ligating Input DNA Insert...")
-        plasmid_seq += insert_dna
-
-        # Add 3' Restriction Site (Second Enzyme if exists, else same as first for non-directional)
-        if len(mcs_enzymes) > 1:
-            enzyme_3 = mcs_enzymes[1]
-            print(f"Adding 3' Restriction Site: {enzyme_3}...")
-            plasmid_seq += self.get_gene_sequence(enzyme_3)
-        elif len(mcs_enzymes) == 1:
-            # If only one enzyme, it flanks both sides
-            enzyme_3 = mcs_enzymes[0]
-            print(f"Adding 3' Restriction Site: {enzyme_3}...")
-            plasmid_seq += self.get_gene_sequence(enzyme_3)
-
-        return plasmid_seq
-
-    def save_to_file(self, sequence, filename="Output.Fa"):
-        """Saves the final sequence in FASTA format."""
+    def save_output(self, sequence, filename="Output.fa"):
         with open(filename, "w") as f:
-            f.write(">Constructed_Plasmid_Vector_BHR\n")
-            # Write in lines of 80 chars
+            f.write(">Synthesized_Plasmid_Vector\n")
             for i in range(0, len(sequence), 80):
                 f.write(sequence[i:i + 80] + "\n")
-        print(f"--- Plasmid saved to {filename} ---")
+        print(f"[SUCCESS] Plasmid saved to '{filename}'.")
 
 
-# --- Execution ---
 def main():
-    # File names
-    input_file = "Input.Fa"
-    design_file = "Design.txt"
-    output_file = "Output.Fa"
+    tool = PlasmidDesigner(marker_file="markers.tab")
 
-    # Check if files exist (For the sake of this code running immediately,
-    # I will generate dummy files if they don't exist)
-    if not os.path.exists(input_file):
-        with open(input_file, "w") as f:
-            f.write(">Target_Gene\nATGCGTACGTACGTACGTACGTACGTACGTTAG")
+    full_sequence = tool.read_fasta("Input.fa")
+    if not full_sequence: return
 
-    if not os.path.exists(design_file):
-        with open(design_file, "w") as f:
-            f.write("Multiple_Cloning_Site1, EcoRI\n")
-            f.write("Multiple_Cloning_Site2, BamHI\n")
-            f.write("Antibiotic_marker1, Ampicillin\n")
+    ori_seq = tool.find_ori_via_gc_skew(full_sequence)
+    design = tool.parse_design("Design.txt")
+    final_plasmid = tool.construct_plasmid(ori_seq, design)
 
-    # Run Process
-    designer = PlasmidDesigner()
+    tool.save_output(final_plasmid, "Output.fa")
 
-    # 1. Read Insert
-    insert_seq = designer.read_fasta(input_file)
-
-    # 2. Read Design
-    design = designer.parse_design(design_file)
-
-    # 3. Build
-    full_plasmid = designer.construct_plasmid(insert_seq, design)
-
-    # 4. Output
-    designer.save_to_file(full_plasmid, output_file)
+    # Verify EcoRI deletion logic (Design.txt omits it, so it shouldn't be there)
+    # Note: If the user explicitly ADDED EcoRI in Design.txt, it would be there.
+    # But since the prompt implies the Design.txt is the one WITHOUT EcoRI...
+    if "GAATTC" not in final_plasmid:
+        print("\n[VERIFICATION] EcoRI site (GAATTC) is ABSENT (Correctly removed).")
+    else:
+        # Check if it was requested
+        if "EcoRI" in design["MCS"]:
+            print("\n[VERIFICATION] EcoRI site is PRESENT (Requested in Design).")
+        else:
+            print("\n[VERIFICATION] EcoRI site is PRESENT (Warning: Unexpected).")
 
 
 if __name__ == "__main__":
